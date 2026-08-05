@@ -35,6 +35,15 @@
       "forward_mode": "native",
       "dest_channel_id": "DESTINATION_CHANNEL_ID",
       "rate_limit_delay": 1.5
+    },
+    {
+      "_comment": "Rule 4 : transfert natif anti-pattern. 'send_delay_min'/'send_delay_max' -> chaque transfert attend un délai aléatoire tiré dans cette fourchette (plancher 1.0 s). 'user_ids' -> pool de comptes ; l'expéditeur est tiré au hasard à chaque transfert (chaque compte doit voir la source et atteindre la destination).",
+      "channels": ["SOURCE_CHANNEL_ID_5"],
+      "forward_mode": "native",
+      "dest_channel_id": "DESTINATION_CHANNEL_ID",
+      "send_delay_min": 2,
+      "send_delay_max": 8,
+      "user_ids": ["POSTER_ACCOUNT_ID_1", "POSTER_ACCOUNT_ID_2"]
     }
   ]
 }

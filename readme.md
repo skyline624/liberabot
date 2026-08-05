@@ -101,6 +101,34 @@ should post the forwards to pin it explicitly (no token in clear text):
 If no token matches `user_id`, native rules are skipped rather than posting as
 the wrong account.
 
+**Randomised timing and sender (native, per rule).** To keep native forwards
+from looking like a regular automaton, a rule can vary both when it posts and
+who posts:
+
+```json
+{
+  "channels": ["SOURCE_CHANNEL_ID"],
+  "forward_mode": "native",
+  "dest_channel_id": "DESTINATION_CHANNEL_ID",
+  "send_delay_min": 2,
+  "send_delay_max": 8,
+  "user_ids": ["ACCOUNT_ID_A", "ACCOUNT_ID_B"]
+}
+```
+
+- `send_delay_min` / `send_delay_max` — each forward waits a random delay drawn
+  in this range (floored to 1.0 s) before posting, so no two posts share the
+  same timing. Delivery is asynchronous: capture stays instant, only the post is
+  deferred. Left unset, the fixed `rate_limit_delay` is used.
+- `user_ids` — pool of posting accounts; one is picked at random per forward.
+  Every account must have its token available in the client and must be able to
+  see the source and reach the destination. A 401 drops that account from the
+  pool until restart. Empty falls back to the global `user_id`.
+
+Note: automating several accounts to vary the sending pattern is multi-account
+self-botting under Discord's terms — the ban risk applies to every account in
+the pool.
+
 | | Webhook mode | Native mode |
 |---|---|---|
 | Posted as | The webhook, with an `APP` badge | Your account, no badge |

@@ -30,6 +30,12 @@ class ForwardRule:
         forward_mode: ``webhook`` or ``native``; inherits the global mode when unset.
         dest_channel_id: Destination channel for native mode; falls back to
             ``webhook_channel_id`` so existing rules work unchanged.
+        send_delay_min/send_delay_max: When both set (native mode), each forward
+            waits a random delay drawn in this range — so no two posts share the
+            same timing. Left unset, the fixed ``rate_limit_delay`` is used.
+        user_ids: Native mode account pool. Each forward is posted by one account
+            picked at random from this list. Empty falls back to the global
+            ``user_id``.
     """
 
     channels: List[str] = field(default_factory=list)
@@ -39,6 +45,9 @@ class ForwardRule:
     rate_limit_delay: float = 0.5
     forward_mode: str = MODE_WEBHOOK
     dest_channel_id: str = ""
+    send_delay_min: float = 0.0
+    send_delay_max: float = 0.0
+    user_ids: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict, default_mode: str = MODE_WEBHOOK) -> "ForwardRule":
@@ -50,6 +59,7 @@ class ForwardRule:
         rule.forward_mode = str(rule.forward_mode).lower()
         if rule.forward_mode not in VALID_MODES:
             rule.forward_mode = MODE_WEBHOOK
+        rule.user_ids = [str(u) for u in (rule.user_ids or [])]
         return rule
 
     @property
@@ -61,6 +71,31 @@ class ForwardRule:
     def destination(self) -> str:
         """Channel (or thread) ID that native forwards are posted to."""
         return str(self.dest_channel_id or self.webhook_channel_id or "")
+
+    @property
+    def delay_range(self) -> tuple:
+        """``(min, max)`` seconds for the per-message delay before posting.
+
+        Falls back to a fixed ``rate_limit_delay`` (min == max) when no valid
+        ``send_delay_min``/``send_delay_max`` range is configured.
+        """
+        lo = float(self.send_delay_min or 0.0)
+        hi = float(self.send_delay_max or 0.0)
+        if hi > 0 and hi >= lo:
+            return (lo, hi)
+        return (float(self.rate_limit_delay), float(self.rate_limit_delay))
+
+    def poster_ids(self, global_user_id: str = "") -> list:
+        """Account ids that may post this rule's forwards (native mode).
+
+        The rule's own ``user_ids`` win; otherwise the global ``user_id`` is used;
+        otherwise an empty list (caller falls back to the first token found).
+        """
+        if self.user_ids:
+            return list(self.user_ids)
+        if global_user_id:
+            return [str(global_user_id)]
+        return []
 
     @property
     def enabled(self) -> bool:

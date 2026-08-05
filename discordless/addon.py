@@ -31,7 +31,12 @@ from mitmproxy import ctx, http  # type: ignore
 from discordless.config import Config
 from discordless.decoder import GatewayDecoder
 from discordless.models import DiscordMessage
-from discordless.native_forward import NativeForwarder, resolve_token
+from discordless.native_forward import (
+    NativeForwarder,
+    account_id,
+    resolve_token,
+    tokens_for_ids,
+)
 from discordless.webhook import WebhookForwarder
 
 # Domains whose traffic is archived (mirrors wumpus_in_the_middle.py)
@@ -155,24 +160,12 @@ class WirecordAddon:
             default=0,
         )
 
-        # Resolve the account token once — only needed by native-forward rules.
-        token = ""
-        if self._config.native_enabled:
-            token = resolve_token(self._config.user_token, self._config.user_id)
-            if token:
-                who = f" (account {self._config.user_id})" if self._config.user_id else ""
-                _log(f"native forward mode — account token resolved{who}")
-            elif self._config.user_id:
-                _log(
-                    f"native forward mode requested for account {self._config.user_id} "
-                    "but no matching token was found in the Discord client — those rules "
-                    "are skipped"
-                )
-            else:
-                _log(
-                    "native forward mode requested but no account token found "
-                    "(set 'user_token' or 'user_id' in config.json) — those rules are skipped"
-                )
+        # Resolve the pool of account tokens once — only native-forward rules
+        # need them. Explicit user_token (if any) is keyed by its own account id.
+        explicit_by_id: dict = {}
+        if self._config.native_enabled and self._config.user_token:
+            tok = self._config.user_token.strip()
+            explicit_by_id[account_id(tok) or self._config.user_id or ""] = tok
 
         # Build channel → forwarder mapping from rules
         self._forwarders = {}
@@ -181,12 +174,29 @@ class WirecordAddon:
             if not rule.enabled:
                 continue
             if rule.native:
-                if not token:
+                ids = rule.poster_ids(self._config.user_id)
+                if ids:
+                    accounts = tokens_for_ids(ids, explicit_by_id)
+                    missing = [i for i in ids if i not in accounts]
+                    if missing:
+                        _log(f"WARNING: native pool for {rule.destination} — no token for {missing}")
+                else:
+                    # No id specified anywhere — fall back to the first token found.
+                    tok = resolve_token(self._config.user_token)
+                    accounts = {account_id(tok) or "": tok} if tok else {}
+                if not accounts:
+                    _log(f"native rule for {rule.destination} skipped — no usable account")
                     continue
+                lo, hi = rule.delay_range
                 fwd = NativeForwarder(
-                    token=token,
+                    accounts=accounts,
                     dest_channel_id=rule.destination,
-                    rate_limit_delay=rule.rate_limit_delay,
+                    delay_min=lo,
+                    delay_max=hi,
+                )
+                pool = "/".join(accounts.keys())
+                _log(
+                    f"native rule → {rule.destination}: pool=[{pool}] delay={lo}-{hi}s"
                 )
                 native_count += 1
             else:
@@ -224,6 +234,10 @@ class WirecordAddon:
         for gk in self._gatekeepers.values():
             gk.close()
         unique_fwds = set(self._forwarders.values())
+        # Stop native workers first, flushing anything still queued.
+        for f in unique_fwds:
+            if hasattr(f, "close"):
+                f.close()
         if unique_fwds:
             sent = sum(f.stats["sent"] for f in unique_fwds)
             errors = sum(f.stats["errors"] for f in unique_fwds)
@@ -430,6 +444,14 @@ class WirecordAddon:
             return
         self._seen_messages.add(msg.dedup_key)
 
+        if native:
+            # Fire-and-forget: the worker paces (random delay) and posts off this
+            # thread. Native forwards are immutable snapshots, so there is no edit
+            # to track — no id round-trip needed.
+            forwarder.enqueue(msg)
+            _log(f"queued {discord_msg_id} for native forward → {forwarder.dest_channel_id}")
+            return
+
         result = forwarder.forward_and_get_id(msg)
         if result and discord_msg_id:
             webhook_msg_id, webhook_channel_id, guild_id = result
@@ -439,8 +461,7 @@ class WirecordAddon:
             if len(self._forwarded) >= _MAX_TRACKED_MESSAGES:
                 self._forwarded.popitem(last=False)  # FIFO eviction
             self._forwarded[key] = (webhook_msg_id, webhook_channel_id, guild_id)
-            label = "forward" if native else "webhook msg"
-            _log(f"forwarded {discord_msg_id} → {label} {webhook_msg_id}")
+            _log(f"forwarded {discord_msg_id} → webhook msg {webhook_msg_id}")
 
     def _maybe_forward_edit(self, d: dict) -> None:
         """Send an edit-notification if the edited message was previously forwarded."""

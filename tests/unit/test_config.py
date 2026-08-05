@@ -144,3 +144,62 @@ class TestNativeRuleDestination:
         )
         assert rule.destination == ""
         assert rule.enabled is False
+
+
+class TestDelayRange:
+    def test_falls_back_to_fixed_rate_limit(self):
+        rule = ForwardRule(channels=["1"], rate_limit_delay=1.5)
+        assert rule.delay_range == (1.5, 1.5)
+
+    def test_range_used_when_configured(self):
+        rule = ForwardRule(channels=["1"], send_delay_min=2.0, send_delay_max=8.0)
+        assert rule.delay_range == (2.0, 8.0)
+
+    def test_only_max_given_uses_zero_min(self):
+        rule = ForwardRule(channels=["1"], send_delay_max=5.0)
+        assert rule.delay_range == (0.0, 5.0)
+
+    def test_invalid_range_falls_back(self):
+        # max < min is not a valid range → fixed rate_limit_delay
+        rule = ForwardRule(channels=["1"], send_delay_min=9.0, send_delay_max=2.0, rate_limit_delay=1.0)
+        assert rule.delay_range == (1.0, 1.0)
+
+    def test_parsed_from_json(self, tmp_path):
+        data = {
+            "forward_mode": "native",
+            "forwards": [{
+                "channels": ["1"],
+                "dest_channel_id": "2",
+                "send_delay_min": 3,
+                "send_delay_max": 12,
+            }],
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(data))
+        cfg = Config.load(str(p))
+        assert cfg.forwards[0].delay_range == (3.0, 12.0)
+
+
+class TestPosterIds:
+    def test_rule_user_ids_win(self):
+        rule = ForwardRule(channels=["1"], user_ids=["aaa", "bbb"])
+        assert rule.poster_ids(global_user_id="zzz") == ["aaa", "bbb"]
+
+    def test_falls_back_to_global_user_id(self):
+        rule = ForwardRule(channels=["1"])
+        assert rule.poster_ids(global_user_id="zzz") == ["zzz"]
+
+    def test_empty_when_nothing_set(self):
+        rule = ForwardRule(channels=["1"])
+        assert rule.poster_ids() == []
+
+    def test_user_ids_coerced_to_str(self, tmp_path):
+        data = {
+            "forward_mode": "native",
+            "forwards": [{"channels": ["1"], "dest_channel_id": "2", "user_ids": [123, 456]}],
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(data))
+        cfg = Config.load(str(p))
+        assert cfg.forwards[0].user_ids == ["123", "456"]
+        assert cfg.forwards[0].poster_ids() == ["123", "456"]
