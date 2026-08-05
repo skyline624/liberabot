@@ -7,6 +7,7 @@ from discordless.models import DiscordMessage
 from discordless.native_forward import (
     _MIN_RATE_LIMIT_DELAY,
     NativeForwarder,
+    account_id,
     resolve_token,
 )
 
@@ -171,12 +172,21 @@ class TestCapabilityFlags:
         assert forwarder.supports_edits is False
 
 
+SECOND_TOKEN = "D" * 24 + "." + "E" * 6 + "." + "F" * 27
+
+
 class TestResolveToken:
     def test_explicit_token_wins(self):
         assert resolve_token("explicit.token.here") == "explicit.token.here"
 
     def test_explicit_token_is_stripped(self):
         assert resolve_token("  padded.token.value  ") == "padded.token.value"
+
+    def test_explicit_token_wins_over_user_id(self):
+        # An explicit token short-circuits before any leveldb / network lookup
+        with patch("discordless.native_forward._collect_tokens") as collect:
+            assert resolve_token("explicit.token", user_id="123") == "explicit.token"
+        collect.assert_not_called()
 
     def test_reads_token_from_leveldb(self, tmp_path):
         store = tmp_path / "leveldb"
@@ -196,3 +206,40 @@ class TestResolveToken:
     def test_unreadable_store_is_skipped(self, tmp_path):
         with patch("discordless.native_forward._LEVELDB_GLOB", str(tmp_path / "missing" / "*")):
             assert resolve_token() == ""
+
+    def test_first_token_wins_without_user_id(self):
+        with patch("discordless.native_forward._collect_tokens", return_value=[FAKE_TOKEN, SECOND_TOKEN]):
+            assert resolve_token() == FAKE_TOKEN
+
+    def test_user_id_selects_matching_account(self):
+        # user_id points at the SECOND account — it must win over ordering
+        def fake_id(tok, *a, **k):
+            return "111" if tok == FAKE_TOKEN else "222"
+
+        with patch("discordless.native_forward._collect_tokens", return_value=[FAKE_TOKEN, SECOND_TOKEN]), \
+                patch("discordless.native_forward.account_id", side_effect=fake_id):
+            assert resolve_token(user_id="222") == SECOND_TOKEN
+
+    def test_user_id_not_present_returns_empty(self):
+        # Never fall back to another account when the requested id is absent
+        with patch("discordless.native_forward._collect_tokens", return_value=[FAKE_TOKEN, SECOND_TOKEN]), \
+                patch("discordless.native_forward.account_id", return_value="999"):
+            assert resolve_token(user_id="222") == ""
+
+
+class TestAccountId:
+    def test_returns_id_on_200(self):
+        with patch("discordless.native_forward.requests.get", return_value=_resp(200, {"id": "42"})):
+            from discordless.native_forward import account_id
+            assert account_id(FAKE_TOKEN) == "42"
+
+    def test_returns_empty_on_401(self):
+        with patch("discordless.native_forward.requests.get", return_value=_resp(401)):
+            from discordless.native_forward import account_id
+            assert account_id(FAKE_TOKEN) == ""
+
+    def test_returns_empty_on_network_error(self):
+        import requests as req
+        with patch("discordless.native_forward.requests.get", side_effect=req.RequestException):
+            from discordless.native_forward import account_id
+            assert account_id(FAKE_TOKEN) == ""

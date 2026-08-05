@@ -9,6 +9,9 @@
   "_comment_user_token": "Token de compte Discord, requis uniquement en mode natif (les webhooks ne peuvent pas créer de transfert). Laisser vide pour une détection automatique depuis le client Discord local (~/.config/discord/Local Storage/leveldb).",
   "user_token": "",
 
+  "_comment_user_id": "Optionnel. ID du compte qui doit poster les transferts natifs, quand le client Discord contient plusieurs comptes. Sans lui, la détection prend le premier token trouvé (ordre non garanti). Ignoré si user_token est renseigné.",
+  "user_id": "",
+
   "forwards": [
     {
       "_comment": "Rule 1 : deux canaux source → un webhook (canal de destination optionnel)",

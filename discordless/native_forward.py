@@ -62,28 +62,69 @@ _SUPER_PROPERTIES = base64.b64encode(
 ).decode()
 
 
-def resolve_token(explicit: str = "") -> str:
-    """Return the account token to authenticate forwards with.
+def _collect_tokens() -> list:
+    """Return the distinct account tokens found in the local Discord leveldb.
 
-    Args:
-        explicit: Token from ``config.json``; returned as-is when non-empty.
-
-    Returns:
-        The explicit token, else one recovered from the local Discord client's
-        leveldb store (same source as ``scripts/replay_api_send.py``), else "".
+    Order is preserved (first store, first occurrence first) so the no-``user_id``
+    path keeps its historical "first token wins" behaviour.
     """
-    if explicit:
-        return explicit.strip()
+    tokens: list = []
+    seen: set = set()
     for path in sorted(glob.glob(os.path.expanduser(_LEVELDB_GLOB))):
         try:
             with open(path, "rb") as f:
                 blob = f.read()
         except OSError:
             continue
-        match = _TOKEN_RE.search(blob)
-        if match:
-            return match.group().decode()
-    return ""
+        for match in _TOKEN_RE.finditer(blob):
+            tok = match.group().decode()
+            if tok not in seen:
+                seen.add(tok)
+                tokens.append(tok)
+    return tokens
+
+
+def account_id(token: str, api_base: str = API_BASE) -> str:
+    """Return the Discord user id owning *token*, or "" if it cannot be resolved."""
+    try:
+        resp = requests.get(
+            f"{api_base}/users/@me", headers=client_headers(token), timeout=15
+        )
+    except requests.RequestException:
+        return ""
+    if resp.status_code != 200:
+        return ""
+    try:
+        return str(resp.json().get("id") or "")
+    except ValueError:
+        return ""
+
+
+def resolve_token(explicit: str = "", user_id: str = "") -> str:
+    """Return the account token to authenticate forwards with.
+
+    Args:
+        explicit: Token from ``config.json``; returned as-is when non-empty.
+        user_id: When set, pick the stored token whose account has this id, so
+            the posting account stays fixed even if the leveldb ordering changes
+            or a second account is added to the client. No fallback to another
+            account when the requested one is absent — posting as the wrong
+            account would be worse than not posting.
+
+    Returns:
+        The explicit token; else the token matching *user_id*; else the first
+        token found in the local Discord leveldb store (same source as
+        ``scripts/replay_api_send.py``); else "".
+    """
+    if explicit:
+        return explicit.strip()
+    tokens = _collect_tokens()
+    if user_id:
+        for tok in tokens:
+            if account_id(tok) == str(user_id):
+                return tok
+        return ""  # requested account not present — do not fall back silently
+    return tokens[0] if tokens else ""
 
 
 def _nonce() -> str:

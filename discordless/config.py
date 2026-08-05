@@ -82,6 +82,10 @@ class Config:
         forward_mode: Default delivery mode for every rule (``webhook`` or ``native``).
         user_token: Discord account token for native mode. Left empty, the token
             is auto-detected from the local Discord client's leveldb store.
+        user_id: Discord account id that native forwards should post as. When the
+            client holds several accounts, this pins the poster to one of them
+            (auto-detection otherwise takes the first token found). Ignored when
+            ``user_token`` is set.
         forwards: List of forwarding rules (channels → destination).
     """
 
@@ -89,6 +93,7 @@ class Config:
     traffic_archive_dir: str = "traffic_archive"
     forward_mode: str = MODE_WEBHOOK
     user_token: str = ""
+    user_id: str = ""
     forwards: List[ForwardRule] = field(default_factory=list)
 
     @classmethod
@@ -123,6 +128,7 @@ class Config:
                 traffic_archive_dir=data.get("traffic_archive_dir", "traffic_archive"),
                 forward_mode=mode,
                 user_token=str(data.get("user_token", "") or ""),
+                user_id=str(data.get("user_id", "") or ""),
                 forwards=forwards,
             )
         except (json.JSONDecodeError, TypeError):

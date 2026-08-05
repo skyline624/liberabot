@@ -90,6 +90,17 @@ token** — webhooks cannot produce one, as the webhook endpoint rejects
 `message_reference`. Leave `user_token` empty to auto-detect the token from the
 local Discord client (same source as the replay scripts); it is never logged.
 
+When the Discord client holds **several accounts**, auto-detection takes the
+first token it finds — order not guaranteed. Set `user_id` to the account that
+should post the forwards to pin it explicitly (no token in clear text):
+
+```json
+{ "forward_mode": "native", "user_id": "462628780574375936", "forwards": [ ... ] }
+```
+
+If no token matches `user_id`, native rules are skipped rather than posting as
+the wrong account.
+
 | | Webhook mode | Native mode |
 |---|---|---|
 | Posted as | The webhook, with an `APP` badge | Your account, no badge |

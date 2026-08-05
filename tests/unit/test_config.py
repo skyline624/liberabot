@@ -100,6 +100,17 @@ class TestForwardMode:
         cfg = Config.load(native_config_file)
         assert cfg.user_token == "test.token.value"
 
+    def test_user_id_defaults_empty(self, native_config_file):
+        cfg = Config.load(native_config_file)
+        assert cfg.user_id == ""
+
+    def test_user_id_loaded(self, tmp_path):
+        data = {"forward_mode": "native", "user_id": "462628780574375936", "forwards": []}
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(data))
+        cfg = Config.load(str(p))
+        assert cfg.user_id == "462628780574375936"
+
 
 class TestNativeRuleDestination:
     def test_falls_back_to_webhook_channel_id(self):

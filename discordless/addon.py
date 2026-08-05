@@ -158,13 +158,20 @@ class WirecordAddon:
         # Resolve the account token once — only needed by native-forward rules.
         token = ""
         if self._config.native_enabled:
-            token = resolve_token(self._config.user_token)
+            token = resolve_token(self._config.user_token, self._config.user_id)
             if token:
-                _log("native forward mode — account token resolved")
+                who = f" (account {self._config.user_id})" if self._config.user_id else ""
+                _log(f"native forward mode — account token resolved{who}")
+            elif self._config.user_id:
+                _log(
+                    f"native forward mode requested for account {self._config.user_id} "
+                    "but no matching token was found in the Discord client — those rules "
+                    "are skipped"
+                )
             else:
                 _log(
                     "native forward mode requested but no account token found "
-                    "(set 'user_token' in config.json) — those rules are skipped"
+                    "(set 'user_token' or 'user_id' in config.json) — those rules are skipped"
                 )
 
         # Build channel → forwarder mapping from rules
