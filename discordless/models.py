@@ -13,6 +13,8 @@ class DiscordMessage:
         author: Username of the message author.
         content: Text content of the message.
         timestamp: ISO 8601 timestamp string from the Discord API.
+        message_id: Source message snowflake ID (required to build a native forward).
+        guild_id: Source guild snowflake ID (native forward reference).
     """
 
     channel_id: str
@@ -23,10 +25,20 @@ class DiscordMessage:
     guild_name: str = ""
     author_id: str = ""
     author_avatar: str = ""
+    message_id: str = ""
+    guild_id: str = ""
 
     @property
     def dedup_key(self) -> str:
-        """Unique key for deduplication, derived from content + metadata."""
+        """Unique key for deduplication.
+
+        Uses the source message ID when available — it is exact and, unlike the
+        content hash, still distinguishes attachment-only messages (which carry
+        no text but are forwardable natively). Falls back to the content hash so
+        messages captured without an ID keep their previous behaviour.
+        """
+        if self.message_id:
+            return f"{self.channel_id}:{self.message_id}"
         h = hashlib.md5(
             f"{self.timestamp}:{self.author}:{self.content}".encode()
         ).hexdigest()[:16]

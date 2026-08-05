@@ -19,11 +19,40 @@ def minimal_config_file(tmp_path):
     """Write a minimal valid config.json to a temp dir and return its path."""
     cfg = {
         "proxy_port": 8080,
-        "intercept_channels": ["111111111111111111"],
-        "webhook_url": "https://discord.com/api/webhooks/test/token",
-        "webhook_username": "TestBot",
-        "rate_limit_delay": 0.0,
         "traffic_archive_dir": str(tmp_path / "traffic_archive"),
+        "forwards": [
+            {
+                "channels": ["111111111111111111"],
+                "webhook_url": "https://discord.com/api/webhooks/test/token",
+                "webhook_username": "TestBot",
+                "rate_limit_delay": 0.0,
+            }
+        ],
+    }
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps(cfg), encoding="utf-8")
+    return str(p)
+
+
+@pytest.fixture
+def native_config_file(tmp_path):
+    """Write a config.json using global native forward mode."""
+    cfg = {
+        "proxy_port": 8080,
+        "forward_mode": "native",
+        "user_token": "test.token.value",
+        "forwards": [
+            {
+                "channels": ["111111111111111111"],
+                "webhook_url": "https://discord.com/api/webhooks/test/token",
+                "webhook_channel_id": "999999999999999999",
+            },
+            {
+                "channels": ["222222222222222222"],
+                "webhook_url": "https://discord.com/api/webhooks/other/token",
+                "forward_mode": "webhook",
+            },
+        ],
     }
     p = tmp_path / "config.json"
     p.write_text(json.dumps(cfg), encoding="utf-8")

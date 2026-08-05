@@ -31,6 +31,7 @@ from mitmproxy import ctx, http  # type: ignore
 from discordless.config import Config
 from discordless.decoder import GatewayDecoder
 from discordless.models import DiscordMessage
+from discordless.native_forward import NativeForwarder, resolve_token
 from discordless.webhook import WebhookForwarder
 
 # Domains whose traffic is archived (mirrors wumpus_in_the_middle.py)
@@ -154,23 +155,55 @@ class WirecordAddon:
             default=0,
         )
 
+        # Resolve the account token once — only needed by native-forward rules.
+        token = ""
+        if self._config.native_enabled:
+            token = resolve_token(self._config.user_token)
+            if token:
+                _log("native forward mode — account token resolved")
+            else:
+                _log(
+                    "native forward mode requested but no account token found "
+                    "(set 'user_token' in config.json) — those rules are skipped"
+                )
+
         # Build channel → forwarder mapping from rules
         self._forwarders = {}
+        native_count = 0
         for rule in self._config.forwards:
             if not rule.enabled:
                 continue
-            fwd = WebhookForwarder(
-                url=rule.webhook_url,
-                username=rule.webhook_username,
-                channel_id=rule.webhook_channel_id,
-                rate_limit_delay=rule.rate_limit_delay,
-            )
+            if rule.native:
+                if not token:
+                    continue
+                fwd = NativeForwarder(
+                    token=token,
+                    dest_channel_id=rule.destination,
+                    rate_limit_delay=rule.rate_limit_delay,
+                )
+                native_count += 1
+            else:
+                fwd = WebhookForwarder(
+                    url=rule.webhook_url,
+                    username=rule.webhook_username,
+                    channel_id=rule.webhook_channel_id,
+                    rate_limit_delay=rule.rate_limit_delay,
+                )
             for ch in rule.channels:
-                self._forwarders[str(ch)] = fwd
+                ch = str(ch)
+                if ch in self._forwarders:
+                    # Last rule wins — the earlier destination silently stops
+                    # receiving this channel, which is easy to do by accident
+                    # when adding a test rule for an already-monitored channel.
+                    _log(f"WARNING: channel {ch} is claimed by several rules — last one wins")
+                self._forwarders[ch] = fwd
         if self._forwarders:
-            _log(f"webhook forwarding enabled — {len(self._forwarders)} channel(s) monitored")
+            _log(
+                f"forwarding enabled — {len(self._forwarders)} channel(s) monitored "
+                f"({native_count} rule(s) in native forward mode)"
+            )
         else:
-            _log("webhook forwarding disabled (configure 'forwards' in config.json)")
+            _log("forwarding disabled (configure 'forwards' in config.json)")
 
         _log(f"archiving to {os.path.abspath(self._archive)}/")
         _log(f"next gateway ID: {self._gateway_count}")
@@ -347,18 +380,30 @@ class WirecordAddon:
             author, author_id, author_avatar = "unknown", "", ""
         content = str(d.get("content", "")).strip()
         timestamp = str(d.get("timestamp", ""))
+        discord_msg_id = str(d.get("id", ""))
+        source_guild_id = str(d.get("guild_id") or "")
+        native = getattr(forwarder, "is_native", False)
 
-        # Append attachment URLs to content so files/images are forwarded
         attachments = d.get("attachments", [])
-        if isinstance(attachments, list):
-            for att in attachments:
-                if isinstance(att, dict):
-                    url = att.get("url", "")
-                    if url:
-                        content = f"{content}\n{url}" if content else url
-
-        if not content:
-            return  # Skip embed-only / empty messages
+        if native:
+            # A native forward references the source message, so Discord renders
+            # its attachments and embeds itself — pasting URLs would only add
+            # noise the original message never had.
+            has_media = bool(attachments or d.get("embeds") or d.get("sticker_items"))
+            if not content and not has_media:
+                return  # Nothing visible to forward
+            if not discord_msg_id:
+                return  # Cannot reference a message without its ID
+        else:
+            # Append attachment URLs to content so files/images are forwarded
+            if isinstance(attachments, list):
+                for att in attachments:
+                    if isinstance(att, dict):
+                        url = att.get("url", "")
+                        if url:
+                            content = f"{content}\n{url}" if content else url
+            if not content:
+                return  # Skip embed-only / empty messages
 
         channel_name, guild_name = self._channel_info.get(channel_id, ("", ""))
         msg = DiscordMessage(
@@ -370,14 +415,14 @@ class WirecordAddon:
             guild_name=guild_name,
             author_id=author_id,
             author_avatar=author_avatar,
+            message_id=discord_msg_id,
+            guild_id=source_guild_id,
         )
 
         if msg.dedup_key in self._seen_messages:
             return
         self._seen_messages.add(msg.dedup_key)
 
-        discord_msg_id = str(d.get("id", ""))
-        source_guild_id = str(d.get("guild_id") or "")
         result = forwarder.forward_and_get_id(msg)
         if result and discord_msg_id:
             webhook_msg_id, webhook_channel_id, guild_id = result
@@ -387,13 +432,19 @@ class WirecordAddon:
             if len(self._forwarded) >= _MAX_TRACKED_MESSAGES:
                 self._forwarded.popitem(last=False)  # FIFO eviction
             self._forwarded[key] = (webhook_msg_id, webhook_channel_id, guild_id)
-            _log(f"forwarded {discord_msg_id} → webhook msg {webhook_msg_id}")
+            label = "forward" if native else "webhook msg"
+            _log(f"forwarded {discord_msg_id} → {label} {webhook_msg_id}")
 
     def _maybe_forward_edit(self, d: dict) -> None:
         """Send an edit-notification if the edited message was previously forwarded."""
         channel_id = str(d.get("channel_id", ""))
         forwarder = self._forwarders.get(channel_id)
         if not forwarder:
+            return
+        if not getattr(forwarder, "supports_edits", True):
+            # A native forward is an immutable snapshot: Discord offers no way to
+            # update it, and posting a separate "edited" notice would expose the
+            # relay as automated. Edits are intentionally dropped in native mode.
             return
 
         discord_msg_id = str(d.get("id", ""))

@@ -2,6 +2,13 @@
   "_comment": "Wirecord configuration — copy to config.json and fill in your values",
   "proxy_port": 8080,
   "traffic_archive_dir": "traffic_archive",
+
+  "_comment_forward_mode": "Mode d'envoi par défaut : 'webhook' (message posté par un webhook) ou 'native' (vraie fonction Transférer de Discord). En mode natif, le message est posté par le compte lui-même : pas de badge APP, bloc « Transféré » natif, pièces jointes et embeds rendus par Discord. Contreparties : webhook_username/avatar ignorés, éditions non répercutées (un transfert est un snapshot figé).",
+  "forward_mode": "webhook",
+
+  "_comment_user_token": "Token de compte Discord, requis uniquement en mode natif (les webhooks ne peuvent pas créer de transfert). Laisser vide pour une détection automatique depuis le client Discord local (~/.config/discord/Local Storage/leveldb).",
+  "user_token": "",
+
   "forwards": [
     {
       "_comment": "Rule 1 : deux canaux source → un webhook (canal de destination optionnel)",
@@ -18,6 +25,13 @@
       "webhook_channel_id": "DESTINATION_CHANNEL_ID",
       "webhook_username": "Monitor",
       "rate_limit_delay": 0.5
+    },
+    {
+      "_comment": "Rule 3 : transfert natif. 'forward_mode' surcharge la valeur globale. La destination est 'dest_channel_id', ou à défaut 'webhook_channel_id'. Aucun webhook_url n'est requis. rate_limit_delay est plancherisé à 1.0 s (limite de 5 messages / 5 s par canal).",
+      "channels": ["SOURCE_CHANNEL_ID_4"],
+      "forward_mode": "native",
+      "dest_channel_id": "DESTINATION_CHANNEL_ID",
+      "rate_limit_delay": 1.5
     }
   ]
 }
